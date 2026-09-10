@@ -14,7 +14,7 @@ BOT_TOKEN = "8960832925:AAGGGnVKOJgQ6lFxy4xkcDnBTRpH7C99mVI"
 # Список Telegram ID администраторов (только они могут запрашивать отчеты и очищать базу)
 ADMIN_IDS = [5387945787] # Можете добавить через запятую другие ID администраторов
 
-DB_FILE = r"C:\Users\alex_p\Desktop\attendance.db"
+DB_FILE = "attendance.db"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
