@@ -307,7 +307,7 @@ def read_root():
     return {"status": "Bot is running 24/7"}
 
 def run_fastapi():
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    uvicorn.run(app, host="0.0.0.0", port=10000)
 
 def run_bot():
     bot.infinity_polling(skip_pending=True)
