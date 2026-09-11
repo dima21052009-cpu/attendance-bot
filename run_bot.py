@@ -9,7 +9,7 @@ from datetime import datetime
 import pandas as pd
 
 # --- НАСТРОЙКИ ---
-BOT_TOKEN = "8960832925:AAGGGnVKOJgQ6lFxy4xkcDnBTRpH7C99mVI"
+BOT_TOKEN = "8960832925:AAGC94bfQ0jsFJBICBNle3_gw-j5NumWVCg"
 
 # Список Telegram ID администраторов (только они могут запрашивать отчеты и очищать базу)
 ADMIN_IDS = [5387945787] # Можете добавить через запятую другие ID администраторов
