@@ -3,3 +3,4 @@ fastapi
 uvicorn
 pandas
 openpyxl
+psycopg2-binary
