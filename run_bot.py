@@ -1,5 +1,5 @@
 import os
-import sqlite3
+import psycopg2
 import threading
 import telebot
 from fastapi import FastAPI
@@ -14,33 +14,36 @@ BOT_TOKEN = "8960832925:AAGGGnVKOJgQ6lFxy4xkcDnBTRpH7C99mVI"
 # Список Telegram ID администраторов (только они могут запрашивать отчеты и очищать базу)
 ADMIN_IDS = [5387945787] # Можете добавить через запятую другие ID администраторов
 
-DB_FILE = "attendance.db"
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL, sslmode='require')
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # --- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ---
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     # Таблица пользователей для связи ID -> Фамилия Имя
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
+            user_id BIGINT PRIMARY KEY,
             full_name TEXT,
             username TEXT,
             status TEXT DEFAULT 'approved'
         )
     """)
-    # Таблица смен
+    # Таблица смен (в PostgreSQL автоинкремент делается через SERIAL)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS shifts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
             full_name TEXT,
             action_type TEXT,
             time_str TEXT,
             date_str TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
@@ -50,9 +53,9 @@ init_db()
 
 # --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ ИМЕНИ ИЗ БАЗЫ ---
 def get_user_full_name(user_id, default_username=None, default_firstname=None):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT full_name FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,))
     row = cursor.fetchone()
     conn.close()
     
@@ -77,9 +80,9 @@ def process_shift_action(call):
     recorded_time = data_parts[2]
     current_date = datetime.now().strftime("%d/%m/%Y")
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO shifts (user_id, full_name, action_type, time_str, date_str) VALUES (?, ?, ?, ?, ?)",
+    cursor.execute("INSERT INTO shifts (user_id, full_name, action_type, time_str, date_str) VALUES (%s, %s, %s, %s, %s)",
                    (user_id, full_name, action_type, recorded_time, current_date))
     conn.commit()
     conn.close()
@@ -109,7 +112,7 @@ def handle_report(message):
             pass
         return
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT date_str, full_name, action_type, time_str FROM shifts ORDER BY date_str ASC, timestamp ASC")
     data = cursor.fetchall()
@@ -174,7 +177,7 @@ def handle_clear(message):
             pass
         return
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM shifts")
     conn.commit()
@@ -200,12 +203,12 @@ def handle_all_messages(message):
                     target_id = int(parts[0])
                     target_name = parts[1].strip()
                     
-                    conn = sqlite3.connect(DB_FILE)
+                    conn = get_db_connection()
                     cursor = conn.cursor()
                     cursor.execute("""
                         INSERT INTO users (user_id, full_name, status) 
-                        VALUES (?, ?, 'approved')
-                        ON CONFLICT(user_id) DO UPDATE SET full_name = ?
+                        VALUES (%s, %s, 'approved')
+                        ON CONFLICT (user_id) DO UPDATE SET full_name = %s
                     """, (target_id, target_name, target_name))
                     conn.commit()
                     conn.close()
@@ -235,9 +238,9 @@ def handle_all_messages(message):
         text = message.text.strip() if message.text else ""
         
         # Проверяем, есть ли пользователь в базе сотрудников
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT full_name FROM users WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,))
         row = cursor.fetchone()
         conn.close()
 
@@ -258,11 +261,14 @@ def handle_all_messages(message):
                 except Exception as e:
                     print(f"Не удалось отправить уведомление админу: {e}")
             
-            # Сохраняем временную запись со статусом "pending"
-            conn = sqlite3.connect(DB_FILE)
+            # Сохраняем временную запись со статусом "pending" (синтаксис ON CONFLICT для PostgreSQL)
+            conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("INSERT OR IGNORE INTO users (user_id, full_name, username, status) VALUES (?, ?, ?, 'pending')",
-                           (user_id, username_info, message.from_user.username))
+            cursor.execute("""
+                INSERT INTO users (user_id, full_name, username, status) 
+                VALUES (%s, %s, %s, 'pending')
+                ON CONFLICT (user_id) DO NOTHING
+            """, (user_id, username_info, message.from_user.username))
             conn.commit()
             conn.close()
 
