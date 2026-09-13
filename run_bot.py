@@ -373,4 +373,8 @@ if __name__ == "__main__":
     web_thread.start()
 
     print("Запуск Telegram-бота...")
-    run_bot()
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+
+    web_thread.join()
