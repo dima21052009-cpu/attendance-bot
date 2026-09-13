@@ -5,7 +5,7 @@ import telebot
 from fastapi import FastAPI
 from telebot import types
 import uvicorn
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 
 # --- НАСТРОЙКИ ---
@@ -99,7 +99,7 @@ def process_shift_action(call):
     except Exception as e:
         print(f"Не удалось обновить сообщение: {e}")
 
-# --- КОМАНДА ОТЧЕТА (Сводная таблица с русскими заголовками) ---
+# --- КОМАНДА ОТЧЕТА (С ПОДДЕРЖКОЙ ПЕРИОДОВ) ---
 
 @bot.message_handler(commands=["report", "отчет"])
 def handle_report(message):
@@ -112,20 +112,72 @@ def handle_report(message):
             pass
         return
 
+    # Получаем аргументы команды, например: /report, /report week, /report month, /report all, /report 13/09/2026
+    args = message.text.split()
+    period_type = args[1].lower() if len(args) > 1 else "today"
+
+    current_date_str = datetime.now().strftime("%d/%m/%Y")
+    
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT date_str, full_name, action_type, time_str FROM shifts ORDER BY date_str ASC, timestamp ASC")
+
+    # Гибкая фильтрация по периодам
+    if period_type == "today" or period_type == "сегодня":
+        cursor.execute("""
+            SELECT date_str, full_name, action_type, time_str 
+            FROM shifts 
+            WHERE date_str = %s 
+            ORDER BY timestamp ASC
+        """, (current_date_str,))
+        report_title = f"Отчет за сегодня ({current_date_str})"
+
+    elif period_type == "week" or period_type == "неделя":
+        # За последние 7 дней
+        week_ago = datetime.now() - timedelta(days=7)
+        cursor.execute("""
+            SELECT date_str, full_name, action_type, time_str 
+            FROM shifts 
+            WHERE timestamp >= %s 
+            ORDER BY timestamp ASC
+        """, (week_ago,))
+        report_title = "Отчет за последнюю неделю"
+
+    elif period_type == "month" or period_type == "месяц":
+        # За последние 30 дней
+        month_ago = datetime.now() - timedelta(days=30)
+        cursor.execute("""
+            SELECT date_str, full_name, action_type, time_str 
+            FROM shifts 
+            WHERE timestamp >= %s 
+            ORDER BY timestamp ASC
+        """, (month_ago,))
+        report_title = "Отчет за последний месяц"
+
+    elif period_type == "all" or period_type == "все":
+        cursor.execute("SELECT date_str, full_name, action_type, time_str FROM shifts ORDER BY date_str ASC, timestamp ASC")
+        report_title = "Полный архивный отчет за все время"
+
+    else:
+        # Попытка запросить конкретную дату (например: /report 13/09/2026)
+        cursor.execute("""
+            SELECT date_str, full_name, action_type, time_str 
+            FROM shifts 
+            WHERE date_str = %s 
+            ORDER BY timestamp ASC
+        """, (period_type,))
+        report_title = f"Отчет за дату: {period_type}"
+
     data = cursor.fetchall()
     conn.close()
 
     if not data:
-        bot.reply_to(message, "📂 База данных смен пока пуста.")
+        bot.reply_to(message, f"📂 За выбранный период (`{period_type}`) данных в базе не найдено.", parse_mode="Markdown")
         return
 
     records_dict = {}
-
     for row in data:
         date_str, full_name, action_type, time_str = row
+        # Ключ теперь учитывает и дату, и имя сотрудника, чтобы за разные дни записи не пересекались
         key = (date_str, full_name)
         
         if key not in records_dict:
@@ -162,7 +214,7 @@ def handle_report(message):
             worksheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
     with open(file_path, "rb") as f:
-        bot.send_document(message.chat.id, f, caption="📊 Сводный отчет по рабочему времени")
+        bot.send_document(message.chat.id, f, caption=f"📊 {report_title}")
 
 # --- КОМАНДА ОЧИСТКИ БАЗЫ ДАННЫХ ---
 
@@ -183,7 +235,7 @@ def handle_clear(message):
     conn.commit()
     conn.close()
 
-    bot.reply_to(message, "🗑 База данных успешно очищена!")
+    bot.reply_to(message, "🗑 База данных смен успешно очищена!")
 
 # --- КОНТРОЛЬ ВСЕХ СООБЩЕНИЙ ---
 
@@ -196,7 +248,6 @@ def handle_all_messages(message):
     if chat_type == "private":
         if user_id in ADMIN_IDS:
             text = message.text.strip() if message.text else ""
-            # Если админ отправляет текст вида: "123456789 Иван Иванов"
             if " " in text:
                 parts = text.split(" ", 1)
                 if parts[0].isdigit():
@@ -220,7 +271,13 @@ def handle_all_messages(message):
                 message, 
                 "Приветствую, Администратор! 🛡\n\n"
                 "• Чтобы привязать имя к ID, отправьте в ЛС в формате:\n`ID Фамилия Имя` (например: `5387945787 Александр Петрухин`)\n\n"
-                "Команды:\n• `/report` — получить отчет\n• `/clear` — очистить базу", 
+                "Команды отчетов:\n"
+                "• `/report` или `/report today` — за сегодня\n"
+                "• `/report week` — за неделю\n"
+                "• `/report month` — за месяц\n"
+                "• `/report all` — за все время (архив)\n"
+                "• `/report ДД.ММ.ГГГГ` — за конкретный день\n\n"
+                "Управление:\n• `/clear` — очистить историю смен", 
                 parse_mode="Markdown"
             )
         else:
@@ -237,14 +294,12 @@ def handle_all_messages(message):
 
         text = message.text.strip() if message.text else ""
         
-        # Проверяем, есть ли пользователь в базе сотрудников
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,))
         row = cursor.fetchone()
         conn.close()
 
-        # Если пользователя нет в базе — отправляем админам уведомление с его ID
         if not row:
             username_info = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
             for admin_id in ADMIN_IDS:
@@ -261,7 +316,6 @@ def handle_all_messages(message):
                 except Exception as e:
                     print(f"Не удалось отправить уведомление админу: {e}")
             
-            # Сохраняем временную запись со статусом "pending" (синтаксис ON CONFLICT для PostgreSQL)
             conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute("""
