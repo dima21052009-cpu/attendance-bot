@@ -132,7 +132,6 @@ def handle_report(message):
         report_title = f"Отчет за сегодня ({current_date_str})"
 
     elif period_type == "week" or period_type == "неделя":
-        # За последние 7 дней
         week_ago = datetime.now() - timedelta(days=7)
         cursor.execute("""
             SELECT date_str, full_name, action_type, time_str 
@@ -143,7 +142,6 @@ def handle_report(message):
         report_title = "Отчет за последнюю неделю"
 
     elif period_type == "month" or period_type == "месяц":
-        # За последние 30 дней
         month_ago = datetime.now() - timedelta(days=30)
         cursor.execute("""
             SELECT date_str, full_name, action_type, time_str 
@@ -158,7 +156,6 @@ def handle_report(message):
         report_title = "Полный архивный отчет за все время"
 
     else:
-        # Попытка запросить конкретную дату (например: /report 13/09/2026)
         cursor.execute("""
             SELECT date_str, full_name, action_type, time_str 
             FROM shifts 
@@ -177,7 +174,6 @@ def handle_report(message):
     records_dict = {}
     for row in data:
         date_str, full_name, action_type, time_str = row
-        # Ключ теперь учитывает и дату, и имя сотрудника, чтобы за разные дни записи не пересекались
         key = (date_str, full_name)
         
         if key not in records_dict:
@@ -244,7 +240,6 @@ def handle_all_messages(message):
     user_id = message.from_user.id
     chat_type = message.chat.type
 
-    # Обработка личных сообщений (привязка ID администратором)
     if chat_type == "private":
         if user_id in ADMIN_IDS:
             text = message.text.strip() if message.text else ""
@@ -287,7 +282,6 @@ def handle_all_messages(message):
                 pass
         return
 
-    # Обработка рабочей группы
     if chat_type in ["group", "supergroup"]:
         if message.text and message.text.startswith("/"):
             return
@@ -370,7 +364,7 @@ def run_fastapi():
     uvicorn.run(app, host="0.0.0.0", port=10000)
 
 def run_bot():
-    bot.infinity_polling(skip_pending=True)
+    bot.infinity_polling(skip_pending=True, interval=3, timeout=20)
 
 if __name__ == "__main__":
     print("Запуск веб-сервера...")
